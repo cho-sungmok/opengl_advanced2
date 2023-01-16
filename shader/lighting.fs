@@ -25,6 +25,7 @@ struct Light {
 	vec3 specular;
 };
 uniform Light light;
+uniform int blinn;
 
 struct Material {
 	//vec3 ambient;
@@ -52,7 +53,8 @@ void main()
 	vec3 lightDir = normalize(-light.direction);
 #endif
 
-#if 0// point | direction light
+// ========================================================================== // point | direction light
+#if 0
 	vec3 pixelNorm = normalize(normal);
 	float diff = max(dot(pixelNorm, lightDir), 0.0);
 	//vec3 diffuse = diff * material.diffuse * light.diffuse;
@@ -70,8 +72,8 @@ void main()
 #elif 1// direction light
 	vec3 result = ambient + diffuse + specular;
 #endif
-
-#elif 1// spot light
+// ========================================================================== // spot light
+#elif 1
 	vec3 result = ambient;
 	float theta = dot(lightDir, normalize(-light.direction));
 
@@ -83,9 +85,19 @@ void main()
 		vec3 diffuse = diff * texColor * light.diffuse;
 
 		vec3 specColor = texture(material.specular, texCoord).xyz;
-		vec3 viewDir = normalize(viewPos - position);
-		vec3 reflectDir = reflect(-lightDir, pixelNorm);
-		float spec = pow(max(dot(viewDir, reflectDir), 0.0), material.shininess);
+		float spec = 0.0;
+		if( blinn==0 )
+		{
+			vec3 viewDir = normalize(viewPos - position);
+			vec3 reflectDir = reflect(-lightDir, pixelNorm);
+			spec = pow(max(dot(viewDir, reflectDir), 0.0), material.shininess);
+		}
+		else
+		{
+			vec3 viewDir = normalize(viewPos - position);
+			vec3 halfDir = normalize(lightDir + viewDir);
+			spec = pow(max(dot(halfDir, pixelNorm), 0.0), material.shininess);
+		}
 		vec3 specular = spec * specColor * light.specular;
 
 		//result += diffuse + specular;
@@ -93,6 +105,7 @@ void main()
 	}
 	result *= attenuation;
 #endif
+// ==========================================================================
 	fragColor = vec4(result, 1.0);
 	//fragColor = vec4(vec3(gl_FragCoord.z), 1.0);
 }
