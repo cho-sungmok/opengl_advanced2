@@ -64,7 +64,7 @@ float ShadowCalculation(vec4 fragPosLight, vec3 normal, vec3 lightDir) {
 }
 
 void main() {
-	vec3 texColor = texture2D(material.diffuse, fs_in.texCoord).xyz;
+	vec3 texColor = texture(material.diffuse, fs_in.texCoord).xyz;
 	vec3 ambient = texColor * light.ambient;
 
 	vec3 result = ambient;
@@ -91,7 +91,7 @@ void main() {
 		float diff = max(dot(pixelNorm, lightDir), 0.0);
 		vec3 diffuse = diff * texColor * light.diffuse;
 
-		vec3 specColor = texture2D(material.specular, fs_in.texCoord).xyz;
+		vec3 specColor = texture(material.specular, fs_in.texCoord).xyz;
 		float spec = 0.0;
 		if (blinn == 0) {
 			vec3 viewDir = normalize(viewPos - fs_in.fragPos);
