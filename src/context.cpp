@@ -17,10 +17,20 @@ void Context::Reshape(int width, int height)
 	glViewport(0, 0, m_width, m_height);
 
 #if FBO_MSAA
-	m_framebuffer = Framebuffer::Create(Texture::CreateMSAA(width, height, GL_RGBA));
+	m_framebuffer = Framebuffer::Create({
+		Texture::CreateMSAA(width, height, GL_RGBA)
+	});
 #else
-	m_framebuffer = Framebuffer::Create(Texture::Create(width, height, GL_RGBA));
+	m_framebuffer = Framebuffer::Create({
+		Texture::Create(width, height, GL_RGBA),
+	});
 #endif
+
+	m_deferGeoFramebuffer = Framebuffer::Create({
+		Texture::Create(width, height, GL_RGBA16F, GL_FLOAT),
+		Texture::Create(width, height, GL_RGBA16F, GL_FLOAT),
+		Texture::Create(width, height, GL_RGBA, GL_UNSIGNED_BYTE),
+	});
 }
 
 void Context::ProcessInput(GLFWwindow* window)
@@ -186,6 +196,9 @@ bool Context::Init()
 	m_normalProgram = Program::Create(
 		"./shader/normal.vs", "./shader/normal.fs");
 
+	m_deferGeoProgram = Program::Create(
+		"./shader/defer_geo.vs", "./shader/defer_geo.fs");
+
 	return true;
 }
 
@@ -227,36 +240,18 @@ void Context::Render()
 	}
 	ImGui::End();
 
-#if 1
-	auto lightView = glm::lookAt(m_light.position,
-		m_light.position + m_light.direction,
-		glm::vec3(0.0f, 1.0f, 0.0f));
-	auto lightProjection = m_light.directional ?
-		glm::ortho(-10.0f, 10.0f, -10.0f, 10.0f, 1.0f, 30.0f) :
-		glm::perspective(
-			glm::radians((m_light.cutoff[0] + m_light.cutoff[1]) * 2.0f),
-			1.0f, 1.0f, 20.0f);
-
-	m_shadowMap->Bind();
-	glClear(GL_DEPTH_BUFFER_BIT);
-	glViewport(0, 0,
-		m_shadowMap->GetShadowMap()->GetWidth(),
-		m_shadowMap->GetShadowMap()->GetHeight());
-	m_simpleProgram->Use();
-	m_simpleProgram->SetUniform("color", glm::vec4(1.0f, 1.0f, 1.0f, 1.0f));
-	DrawScene(lightView, lightProjection, m_simpleProgram.get());
-
-	Framebuffer::BindToDefault();
-	glViewport(0, 0, m_width, m_height);
-#endif
-
-	m_framebuffer->Bind();// ================================================
-
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
-	glEnable(GL_DEPTH_TEST);
-	//glDepthMask(GL_FALSE);// depth buffer의 업데이트 막기 default true
-	//glClearDepth(1.0f);// depth buffer의 초기값 설정하기 0이 가장 가깝고 1이 가장 멀다. default 1.0f
-	//glDepthFunc(GL_LESS); default GL_LESS
+	if (ImGui::Begin("G-Buffers")) {
+		const char* bufferNames[] = {"position", "normal", "albedo/specular" };
+		static int bufferSelect = 0;
+		ImGui::Combo("buffer", &bufferSelect, bufferNames, 3);
+		float width = ImGui::GetContentRegionAvailWidth();
+		float height = width * ((float)m_height / (float)m_width);
+		auto selectedAttachment =
+			m_deferGeoFramebuffer->GetColorAttachment(bufferSelect);
+		ImGui::Image((ImTextureID)selectedAttachment->Get(),
+			ImVec2(width, height), ImVec2(0, 1), ImVec2(1, 0));
+	}
+	ImGui::End();
 
 	m_cameraFront = 
 		glm::rotate(glm::mat4(1.0f), glm::radians(m_cameraYaw), glm::vec3(0.0f, 1.0f, 0.0f)) *
@@ -269,6 +264,46 @@ void Context::Render()
 		(float)m_width/(float)m_height, 0.1f, 100.0f);
 	auto view = glm::lookAt(m_cameraPos,
 		m_cameraPos + m_cameraFront, m_cameraUp);
+
+#if 1
+	auto lightView = glm::lookAt(m_light.position,
+		m_light.position + m_light.direction,
+		glm::vec3(0.0f, 1.0f, 0.0f));
+	auto lightProjection = m_light.directional ?
+		glm::ortho(-10.0f, 10.0f, -10.0f, 10.0f, 1.0f, 30.0f) :
+		glm::perspective(
+			glm::radians((m_light.cutoff[0] + m_light.cutoff[1]) * 2.0f),
+			1.0f, 1.0f, 20.0f);
+
+	// shadow map
+	m_shadowMap->Bind();
+	glClear(GL_DEPTH_BUFFER_BIT);
+	glViewport(0, 0,
+		m_shadowMap->GetShadowMap()->GetWidth(),
+		m_shadowMap->GetShadowMap()->GetHeight());
+	m_simpleProgram->Use();
+	m_simpleProgram->SetUniform("color", glm::vec4(1.0f, 1.0f, 1.0f, 1.0f));
+	DrawScene(lightView, lightProjection, m_simpleProgram.get());
+	// defer shading
+	m_deferGeoFramebuffer->Bind();
+	glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+	glViewport(0, 0, m_width, m_height);
+	m_deferGeoProgram->Use();
+	DrawScene(view, projection, m_deferGeoProgram.get());
+
+	Framebuffer::BindToDefault();
+	glViewport(0, 0, m_width, m_height);
+	glClearColor(m_clearColor.r, m_clearColor.g, m_clearColor.b, m_clearColor.a);
+#endif
+
+//	m_framebuffer->Bind();// ================================================
+
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+	glEnable(GL_DEPTH_TEST);
+	//glDepthMask(GL_FALSE);// depth buffer의 업데이트 막기 default true
+	//glClearDepth(1.0f);// depth buffer의 초기값 설정하기 0이 가장 가깝고 1이 가장 멀다. default 1.0f
+	//glDepthFunc(GL_LESS); default GL_LESS
 
 	auto skyboxModelTransform = 
 		glm::translate(glm::mat4(1.0f), m_cameraPos) *
@@ -349,16 +384,16 @@ void Context::Render()
 	m_normalProgram->SetUniform("transform", projection * view * modelTransform);
 	m_plane->Draw(m_normalProgram.get());
 
-	Framebuffer::BindToDefault();// ================================================
-
-	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
-
-	m_postProgram->Use();
-	m_postProgram->SetUniform("transform", glm::scale(glm::mat4(1.0f), glm::vec3(2.0f, 2.0f, 1.0f)));
-	m_postProgram->SetUniform("gamma", m_gamma);
-	m_framebuffer->GetColorAttachment()->Bind();
-	m_postProgram->SetUniform("tex", 0);
-	m_plane->Draw(m_postProgram.get());
+//	Framebuffer::BindToDefault();// ================================================
+//
+//	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+//
+//	m_postProgram->Use();
+//	m_postProgram->SetUniform("transform", glm::scale(glm::mat4(1.0f), glm::vec3(2.0f, 2.0f, 1.0f)));
+//	m_postProgram->SetUniform("gamma", m_gamma);
+//	m_framebuffer->GetColorAttachment()->Bind();
+//	m_postProgram->SetUniform("tex", 0);
+//	m_plane->Draw(m_postProgram.get());
 }
 
 #include <iostream>

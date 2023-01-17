@@ -91,5 +91,8 @@ private:
 
 	int m_width { WINDOW_WIDTH };
 	int m_height { WINDOW_HEIGHT };
+
+	FramebufferUPtr m_deferGeoFramebuffer;
+	ProgramUPtr m_deferGeoProgram;
 };
 
