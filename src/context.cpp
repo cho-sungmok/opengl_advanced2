@@ -175,6 +175,17 @@ bool Context::Init()
 	m_plane->GetIndexBuffer()->Bind();
 #endif
 
+	m_shadowMap = ShadowMap::Create(1024, 1024);
+	m_lightingShadowProgram = Program::Create(
+		"./shader/lighting_shadow.vs", "./shader/lighting_shadow.fs");
+
+	m_brickDiffuseTexture = Texture::CreateFromImage(
+		Image::Load("./image/brickwall.jpg", false).get());
+	m_brickNormalTexture = Texture::CreateFromImage(
+		Image::Load("./image/brickwall_normal.jpg", false).get());
+	m_normalProgram = Program::Create(
+		"./shader/normal.vs", "./shader/normal.fs");
+
 	return true;
 }
 
@@ -196,6 +207,7 @@ void Context::Render()
 			m_cameraPos = glm::vec3(0.0f, 0.0f, 3.0f);
 		}		
 		if (ImGui::CollapsingHeader("light", ImGuiTreeNodeFlags_DefaultOpen)) {
+			ImGui::Checkbox("l.directional", &m_light.directional);
 			ImGui::DragFloat3("l.position", glm::value_ptr(m_light.position), 0.01f);
 			ImGui::DragFloat3("l.direction", glm::value_ptr(m_light.direction), 0.01f);
  			ImGui::DragFloat2("l.cutoff", glm::value_ptr(m_light.cutoff), 0.5f, 0.0f, 180.0f);
@@ -209,10 +221,34 @@ void Context::Render()
 
 		ImGui::Checkbox("animation", &m_animation);
 
-		float aspectRatio = (float)m_width / (float)m_width;
-		ImGui::Image((ImTextureID)m_framebuffer->GetColorAttachment()->Get(), ImVec2(150 * aspectRatio, 150));
+		//float aspectRatio = (float)m_width / (float)m_width;
+		//ImGui::Image((ImTextureID)m_framebuffer->GetColorAttachment()->Get(), ImVec2(150 * aspectRatio, 150));
+		ImGui::Image((ImTextureID)m_shadowMap->GetShadowMap()->Get(), ImVec2(256, 256), ImVec2(0, 1), ImVec2(1, 0));
 	}
 	ImGui::End();
+
+#if 1
+	auto lightView = glm::lookAt(m_light.position,
+		m_light.position + m_light.direction,
+		glm::vec3(0.0f, 1.0f, 0.0f));
+	auto lightProjection = m_light.directional ?
+		glm::ortho(-10.0f, 10.0f, -10.0f, 10.0f, 1.0f, 30.0f) :
+		glm::perspective(
+			glm::radians((m_light.cutoff[0] + m_light.cutoff[1]) * 2.0f),
+			1.0f, 1.0f, 20.0f);
+
+	m_shadowMap->Bind();
+	glClear(GL_DEPTH_BUFFER_BIT);
+	glViewport(0, 0,
+		m_shadowMap->GetShadowMap()->GetWidth(),
+		m_shadowMap->GetShadowMap()->GetHeight());
+	m_simpleProgram->Use();
+	m_simpleProgram->SetUniform("color", glm::vec4(1.0f, 1.0f, 1.0f, 1.0f));
+	DrawScene(lightView, lightProjection, m_simpleProgram.get());
+
+	Framebuffer::BindToDefault();
+	glViewport(0, 0, m_width, m_height);
+#endif
 
 	m_framebuffer->Bind();// ================================================
 
@@ -258,6 +294,7 @@ void Context::Render()
 		m_box->Draw(m_simpleProgram.get());
 	}
 
+#if 0
 	m_program->Use();
 	m_program->SetUniform("viewPos", m_cameraPos);
 	m_program->SetUniform("light.position", lightPos);
@@ -272,6 +309,45 @@ void Context::Render()
 	m_program->SetUniform("blinn", (m_blinn ? 1 : 0));
 
 	DrawScene(view, projection, m_program.get());
+#else
+	m_lightingShadowProgram->Use();
+	m_lightingShadowProgram->SetUniform("viewPos", m_cameraPos);
+	m_lightingShadowProgram->SetUniform("light.directional", m_light.directional ? 1 : 0);
+	m_lightingShadowProgram->SetUniform("light.position", m_light.position);
+	m_lightingShadowProgram->SetUniform("light.direction", m_light.direction);
+	m_lightingShadowProgram->SetUniform("light.cutoff", glm::vec2(
+		cosf(glm::radians(m_light.cutoff[0])),
+		cosf(glm::radians(m_light.cutoff[0] + m_light.cutoff[1]))));
+	m_lightingShadowProgram->SetUniform("light.attenuation", GetAttenuationCoeff(m_light.distance));
+	m_lightingShadowProgram->SetUniform("light.ambient", m_light.ambient);
+	m_lightingShadowProgram->SetUniform("light.diffuse", m_light.diffuse);
+	m_lightingShadowProgram->SetUniform("light.specular", m_light.specular);
+	m_lightingShadowProgram->SetUniform("blinn", (m_blinn ? 1 : 0));
+	m_lightingShadowProgram->SetUniform("lightTransform", lightProjection * lightView);
+	glActiveTexture(GL_TEXTURE3);
+	m_shadowMap->GetShadowMap()->Bind();
+	m_lightingShadowProgram->SetUniform("shadowMap", 3);
+	glActiveTexture(GL_TEXTURE0);
+
+	DrawScene(view, projection, m_lightingShadowProgram.get());
+#endif
+
+	auto modelTransform =
+		glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 3.0f, 0.0f)) *
+		glm::rotate(glm::mat4(1.0f), glm::radians(-90.f), glm::vec3(1.0f, 1.0f, 1.0f));
+	m_normalProgram->Use();
+	m_normalProgram->SetUniform("viewPos", m_cameraPos);
+	m_normalProgram->SetUniform("lightPos", m_light.position);
+	glActiveTexture(GL_TEXTURE0);
+	m_brickDiffuseTexture->Bind();
+	m_normalProgram->SetUniform("diffuse", 0);
+	glActiveTexture(GL_TEXTURE1);
+	m_brickNormalTexture->Bind();
+	m_normalProgram->SetUniform("normalMap", 1);
+	glActiveTexture(GL_TEXTURE0);
+	m_normalProgram->SetUniform("modelTransform", modelTransform);
+	m_normalProgram->SetUniform("transform", projection * view * modelTransform);
+	m_plane->Draw(m_normalProgram.get());
 
 	Framebuffer::BindToDefault();// ================================================
 
@@ -318,7 +394,7 @@ void Context::DrawScene(const glm::mat4& view,
 	program->Use();
 	auto modelTransform =
 		glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, -0.5f, 0.0f)) *
-		glm::scale(glm::mat4(1.0f), glm::vec3(10.0f, 1.0f, 10.0f));
+		glm::scale(glm::mat4(1.0f), glm::vec3(40.0f, 1.0f, 40.0f));
 	auto transform = projection * view * modelTransform;
 	program->SetUniform("transform", transform);
 	program->SetUniform("modelTransform", modelTransform);
