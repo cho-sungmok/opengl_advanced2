@@ -94,5 +94,23 @@ private:
 
 	FramebufferUPtr m_deferGeoFramebuffer;
 	ProgramUPtr m_deferGeoProgram;
+	ProgramUPtr m_deferLightProgram;
+
+	struct DeferLight {
+		glm::vec3 position;
+		glm::vec3 color;
+	};
+	std::vector<DeferLight> m_deferLights;
+
+	FramebufferUPtr m_ssaoFramebuffer;
+	ProgramUPtr m_ssaoProgram;
+	ModelUPtr m_model;
+	TextureUPtr m_ssaoNoiseTexture;
+	std::vector<glm::vec3> m_ssaoSamples;
+	float m_ssaoRadius { 1.0f };
+
+	ProgramUPtr m_blurProgram;
+	FramebufferUPtr m_ssaoBlurFramebuffer;
+	bool m_useSsao { true };
 };
 
